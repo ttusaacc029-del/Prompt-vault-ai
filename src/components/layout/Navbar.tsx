@@ -25,10 +25,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSettings
 }) => {
   const { theme, toggleTheme } = useTheme();
-  const { user, isAuthenticated, isAdmin, logout, quickSwitchUser } = useAuth();
+  const { user, isAuthenticated, isGuest, isAdmin, logout } = useAuth();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
-  const [isDemoMenuOpen, setIsDemoMenuOpen] = useState(false);
 
   const navLinks = [
     { id: 'prompts', label: 'Prompts', icon: Layers },
@@ -142,65 +141,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             )}
           </button>
 
-          {/* Tester / Demo Role Quick Switcher */}
-          <div className="relative hidden xl:block">
-            <button
-              id="demo-role-switcher-btn"
-              onClick={() => setIsDemoMenuOpen(!isDemoMenuOpen)}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] font-semibold tracking-wide uppercase bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-300 dark:border-slate-700 hover:border-cyan-500"
-              title="Test permissions across plans"
-            >
-              <Zap className="w-3 h-3 text-cyan-400" />
-              <span>Simulate Tier</span>
-              <ChevronDown className="w-3 h-3 opacity-60" />
-            </button>
-            {isDemoMenuOpen && (
-              <div className="absolute right-0 mt-2 w-48 py-1.5 bg-white dark:bg-[#0F172A] rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 z-50">
-                <div className="px-3 py-1 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-100 dark:border-slate-800/80">
-                  Switch Test Account
-                </div>
-                <button
-                  onClick={() => { quickSwitchUser('STUDIO'); setIsDemoMenuOpen(false); }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-amber-500 hover:bg-amber-500/10 flex items-center justify-between"
-                >
-                  <span>Studio Plan (Unlimited)</span>
-                  <Crown className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => { quickSwitchUser('PRO'); setIsDemoMenuOpen(false); }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-cyan-500 hover:bg-cyan-500/10 flex items-center justify-between"
-                >
-                  <span>Pro Plan ($10/mo)</span>
-                  <span className="text-[10px] bg-cyan-500/20 px-1 rounded">25 req</span>
-                </button>
-                <button
-                  onClick={() => { quickSwitchUser('FREE'); setIsDemoMenuOpen(false); }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-500/10 flex items-center justify-between"
-                >
-                  <span>Free Plan ($0)</span>
-                  <span className="text-[10px]">Locked</span>
-                </button>
-                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-                <button
-                  onClick={() => { quickSwitchUser('SUPER_ADMIN'); setIsDemoMenuOpen(false); }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-amber-400 hover:bg-amber-500/10 flex items-center justify-between font-medium"
-                >
-                  <span>Super Admin (Owner)</span>
-                  <Crown className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => { quickSwitchUser('ADMIN'); setIsDemoMenuOpen(false); }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-purple-400 hover:bg-purple-500/10 flex items-center justify-between"
-                >
-                  <span>Administrator</span>
-                  <Shield className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* User Logged In Profile / Logged Out CTA */}
-          {isAuthenticated && user ? (
+          {/* User Logged In Profile OR Guest / Sign Up Controls */}
+          {isAuthenticated && !isGuest && user ? (
             <div className="relative">
               <button
                 id="nav-profile-menu-btn"
@@ -281,20 +223,24 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-medium text-slate-500 dark:text-slate-400 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                Guest (Free)
+              </span>
               <button
                 id="nav-login-btn"
                 onClick={() => onOpenAuth('login')}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
+                className="px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/70 transition-colors"
               >
-                Login
+                Sign In
               </button>
               <button
                 id="nav-signup-btn"
                 onClick={() => onOpenAuth('signup')}
-                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-md shadow-cyan-500/20 transition-all"
+                className="px-3 sm:px-3.5 py-1.5 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-md shadow-cyan-500/20 transition-all flex items-center gap-1"
               >
-                Get Started
+                <span>Create Account</span>
               </button>
             </div>
           )}

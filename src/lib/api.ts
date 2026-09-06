@@ -1,21 +1,17 @@
 import { Category, CreatorVideo, CustomPromptRequest, MonthlyUsage, Prompt, SubscriptionPlan, User, VideoReport, AdminStats } from '../types';
+import { auth } from './firebase';
 
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json'
   };
-  try {
-    const saved = localStorage.getItem('pv_user');
-    if (saved) {
-      const user = JSON.parse(saved);
-      if (user?.uid) headers['x-user-id'] = user.uid;
-      if (user?.email) {
-        headers['x-user-email'] = user.email;
-        headers['Authorization'] = `Bearer ${user.uid || user.email}`;
-      }
+  const currentUser = auth.currentUser;
+  if (currentUser) {
+    headers['x-user-id'] = currentUser.uid;
+    if (currentUser.email) {
+      headers['x-user-email'] = currentUser.email;
     }
-  } catch (e) {
-    // Ignore storage parse issues
+    headers['Authorization'] = `Bearer ${currentUser.uid}`;
   }
   return headers;
 }
@@ -427,6 +423,44 @@ export const api = {
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Failed to remove admin');
+    }
+    return res.json();
+  },
+
+  // Subscriptions
+  async requestSubscription(userId: string, plan: SubscriptionPlan): Promise<{ success: boolean; message: string; user: User }> {
+    const res = await fetch('/api/subscriptions/request', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ userId, plan })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to submit subscription request');
+    }
+    return res.json();
+  },
+
+  async approveSubscription(userId: string, plan: SubscriptionPlan): Promise<{ success: boolean; user: User }> {
+    const res = await fetch('/api/admin/subscriptions/approve', {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ userId, plan })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to approve subscription');
+    }
+    return res.json();
+  },
+
+  async getPendingSubscriptions(): Promise<{ userId: string; userEmail: string; userName: string; requestedPlan: SubscriptionPlan; requestedAt: string }[]> {
+    const res = await fetch('/api/admin/subscriptions/pending', {
+      headers: getAuthHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Failed to load pending subscriptions');
     }
     return res.json();
   }

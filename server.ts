@@ -254,66 +254,25 @@ app.post('/api/auth/login', (req, res) => {
   const targetEmail = (email || '').toLowerCase();
   let user = users.find(u => u.email.toLowerCase() === targetEmail);
 
-  if (targetEmail === OWNER_SUPERADMIN_EMAIL.toLowerCase()) {
-    if (user) {
-      user.role = 'superadmin';
-      user.isSuperAdmin = true;
-      user.plan = 'STUDIO';
-      user.adminPermissions = {
-        canManagePrompts: true,
-        canManageCategories: true,
-        canManageUsers: true,
-        canManageSubscriptions: true,
-        canManageVideos: true,
-        canManageRequests: true,
-        canManageReports: true,
-        canManageAdmins: true
-      };
-    } else {
-      user = {
-        uid: 'usr-superadmin',
-        name: 'Super Admin (Owner)',
-        email: OWNER_SUPERADMIN_EMAIL,
-        photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
-        role: 'superadmin',
-        isSuperAdmin: true,
-        adminPermissions: {
-          canManagePrompts: true,
-          canManageCategories: true,
-          canManageUsers: true,
-          canManageSubscriptions: true,
-          canManageVideos: true,
-          canManageRequests: true,
-          canManageReports: true,
-          canManageAdmins: true
-        },
-        plan: 'STUDIO',
-        subscriptionStatus: 'active',
-        createdAt: new Date().toISOString().split('T')[0],
-        updatedAt: new Date().toISOString().split('T')[0]
-      };
-      users.push(user);
-    }
+  if (user) {
     return res.json({ user });
   }
 
-  if (user) {
-    res.json({ user });
-  } else {
-    // Create new account automatically for seamless testing
-    const newUser: User = {
-      uid: 'usr-' + Date.now(),
-      name: (email || 'Creator').split('@')[0],
-      email: email || 'creator@example.com',
-      role: 'user',
-      plan: 'FREE',
-      subscriptionStatus: 'active',
-      createdAt: new Date().toISOString().split('T')[0],
-      updatedAt: new Date().toISOString().split('T')[0]
-    };
-    users.push(newUser);
-    res.json({ user: newUser });
-  }
+  // Brand new account: ALWAYS starts with FREE plan, role 'user'
+  const isOwner = targetEmail === OWNER_SUPERADMIN_EMAIL.toLowerCase();
+  const newUser: User = {
+    uid: 'usr-' + Date.now(),
+    name: (email || 'Creator').split('@')[0],
+    email: email || 'creator@example.com',
+    role: isOwner ? 'superadmin' : 'user',
+    isSuperAdmin: isOwner,
+    plan: isOwner ? 'STUDIO' : 'FREE',
+    subscriptionStatus: isOwner ? 'active' : 'none',
+    createdAt: new Date().toISOString().split('T')[0],
+    updatedAt: new Date().toISOString().split('T')[0]
+  };
+  users.push(newUser);
+  res.json({ user: newUser });
 });
 
 app.put('/api/auth/user/:id', (req, res) => {
@@ -334,11 +293,110 @@ app.put('/api/auth/user/:id', (req, res) => {
     users[userIndex].role = role;
   }
 
+  // Security: Plan cannot be modified by regular users! Only Admin can assign/upgrade plans
+  if (plan !== undefined && plan !== users[userIndex].plan) {
+    const isCallerAdmin = caller && (
+      caller.email.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase() ||
+      caller.role === 'superadmin' ||
+      caller.role === 'admin'
+    );
+    if (!isCallerAdmin) {
+      return res.status(403).json({ error: 'Forbidden: Only an administrator can assign or upgrade subscription plans.' });
+    }
+    users[userIndex].plan = plan;
+    users[userIndex].subscriptionStatus = 'active';
+    delete users[userIndex].subscriptionRequested;
+  }
+
   if (name !== undefined) users[userIndex].name = name;
-  if (plan !== undefined) users[userIndex].plan = plan;
   if (photoURL !== undefined) users[userIndex].photoURL = photoURL;
   users[userIndex].updatedAt = new Date().toISOString().split('T')[0];
   res.json(users[userIndex]);
+});
+
+// Subscription Request by User (e.g. Studio Plan $20/month)
+app.post('/api/subscriptions/request', (req, res) => {
+  const caller = getRequestUser(req);
+  const { userId, plan } = req.body;
+  const targetId = userId || caller?.uid;
+
+  if (!targetId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+
+  let user = users.find(u => u.uid === targetId);
+  if (!user && caller) {
+    user = caller;
+    users.push(user);
+  }
+  if (!user) {
+    // If not found in memory, create record
+    user = {
+      uid: targetId,
+      name: caller?.name || 'Creator',
+      email: caller?.email || '',
+      role: 'user',
+      plan: 'FREE',
+      subscriptionStatus: 'none',
+      subscriptionRequested: plan,
+      createdAt: new Date().toISOString().split('T')[0],
+      updatedAt: new Date().toISOString().split('T')[0]
+    };
+    users.push(user);
+  } else {
+    user.subscriptionRequested = plan;
+    user.updatedAt = new Date().toISOString().split('T')[0];
+  }
+
+  res.json({
+    success: true,
+    message: `Subscription request for ${plan} submitted for Administrator review.`,
+    user
+  });
+});
+
+// Admin: Approve Subscription
+app.post('/api/admin/subscriptions/approve', requireAdmin, (req, res) => {
+  const { userId, plan } = req.body;
+  if (!userId || !plan) {
+    return res.status(400).json({ error: 'User ID and Plan are required' });
+  }
+
+  let user = users.find(u => u.uid === userId);
+  if (!user) {
+    user = {
+      uid: userId,
+      name: 'Creator',
+      email: '',
+      role: 'user',
+      plan: plan,
+      subscriptionStatus: 'active',
+      createdAt: new Date().toISOString().split('T')[0],
+      updatedAt: new Date().toISOString().split('T')[0]
+    };
+    users.push(user);
+  } else {
+    user.plan = plan;
+    user.subscriptionStatus = 'active';
+    delete user.subscriptionRequested;
+    user.updatedAt = new Date().toISOString().split('T')[0];
+  }
+
+  res.json({ success: true, user });
+});
+
+// Admin: Get list of pending subscriptions
+app.get('/api/admin/subscriptions/pending', requireAdmin, (req, res) => {
+  const pending = users
+    .filter(u => !!u.subscriptionRequested)
+    .map(u => ({
+      userId: u.uid,
+      userEmail: u.email,
+      userName: u.name,
+      requestedPlan: u.subscriptionRequested as SubscriptionPlan,
+      requestedAt: u.updatedAt || new Date().toISOString().split('T')[0]
+    }));
+  res.json(pending);
 });
 
 // Prompts Library

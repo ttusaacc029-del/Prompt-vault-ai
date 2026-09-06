@@ -5,6 +5,11 @@ import {
   signInWithPopup, 
   signOut as firebaseSignOut, 
   onAuthStateChanged,
+  signInAnonymously,
+  linkWithPopup,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  updateProfile,
   User as FirebaseUser 
 } from 'firebase/auth';
 import { 
@@ -30,7 +35,7 @@ import {
   getDownloadURL 
 } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { User, Prompt, Category, CustomPromptRequest, MonthlyUsage } from '../types';
+import { User, Prompt, Category, CustomPromptRequest, MonthlyUsage, SubscriptionPlan } from '../types';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -101,15 +106,98 @@ async function testConnection() {
 }
 testConnection();
 
-const OWNER_SUPERADMIN_EMAIL = 'usagiptiktok@gmail.com';
+export const OWNER_SUPERADMIN_EMAIL = 'usagiptiktok@gmail.com';
 
 /**
- * Sign In with Google via Firebase Auth popup
+ * Get user profile directly from Firestore
+ */
+export async function getUserProfile(uid: string): Promise<User | null> {
+  try {
+    const snap = await getDoc(doc(db, 'users', uid));
+    if (snap.exists()) {
+      return snap.data() as User;
+    }
+    return null;
+  } catch (err) {
+    console.warn('Could not fetch user profile from Firestore', err);
+    return null;
+  }
+}
+
+/**
+ * Ensures an Anonymous Guest Account exists with Free plan
+ */
+export async function ensureAnonymousGuest(): Promise<User> {
+  let fbUser = auth.currentUser;
+  if (!fbUser) {
+    const cred = await signInAnonymously(auth);
+    fbUser = cred.user;
+  }
+
+  const userDocRef = doc(db, 'users', fbUser.uid);
+  let existing: User | null = null;
+  try {
+    const snap = await getDoc(userDocRef);
+    if (snap.exists()) {
+      existing = snap.data() as User;
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  if (existing) {
+    return existing;
+  }
+
+  const guestUser: User = {
+    uid: fbUser.uid,
+    name: 'Guest Creator',
+    email: '',
+    photoURL: undefined,
+    role: 'user',
+    isSuperAdmin: false,
+    isAnonymous: true,
+    plan: 'FREE',
+    subscriptionStatus: 'none',
+    createdAt: new Date().toISOString().split('T')[0],
+    updatedAt: new Date().toISOString().split('T')[0]
+  };
+
+  try {
+    await setDoc(userDocRef, guestUser);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, `users/${fbUser.uid}`);
+  }
+
+  return guestUser;
+}
+
+/**
+ * Sign In with Google via Firebase Auth popup.
+ * If user is currently an anonymous guest, links the account to preserve their favorites and vault data.
  */
 export async function signInWithGoogle(): Promise<User> {
   try {
-    const result = await signInWithPopup(auth, googleProvider);
-    const fbUser = result.user;
+    let fbUser: FirebaseUser;
+    const isAnonymous = auth.currentUser?.isAnonymous;
+
+    if (isAnonymous && auth.currentUser) {
+      try {
+        const linkResult = await linkWithPopup(auth.currentUser, googleProvider);
+        fbUser = linkResult.user;
+      } catch (linkError: any) {
+        // If the Google credential is already linked to another account, sign in to that account directly
+        if (linkError.code === 'auth/credential-already-in-use') {
+          const signInResult = await signInWithPopup(auth, googleProvider);
+          fbUser = signInResult.user;
+        } else {
+          throw linkError;
+        }
+      }
+    } else {
+      const signInResult = await signInWithPopup(auth, googleProvider);
+      fbUser = signInResult.user;
+    }
 
     const isOwner = fbUser.email?.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase();
     const userDocRef = doc(db, 'users', fbUser.uid);
@@ -121,16 +209,21 @@ export async function signInWithGoogle(): Promise<User> {
         existingData = snap.data() as User;
       }
     } catch (err) {
-      // Non-blocking catch on initial read, will handle on write
+      // Non-blocking catch on initial read
     }
 
     if (existingData) {
       const updatedUser: User = {
         ...existingData,
         name: fbUser.displayName || existingData.name,
+        email: fbUser.email || existingData.email,
         photoURL: fbUser.photoURL || existingData.photoURL,
+        isAnonymous: false,
         role: isOwner ? 'superadmin' : existingData.role,
-        plan: isOwner ? 'STUDIO' : existingData.plan,
+        isSuperAdmin: isOwner,
+        // The $20 Studio plan is ONLY given to the owner or if already assigned by admin in Firestore!
+        plan: isOwner ? 'STUDIO' : (existingData.plan || 'FREE'),
+        subscriptionStatus: isOwner ? 'active' : (existingData.subscriptionStatus || 'none'),
         updatedAt: new Date().toISOString().split('T')[0]
       };
       try {
@@ -140,14 +233,17 @@ export async function signInWithGoogle(): Promise<User> {
       }
       return updatedUser;
     } else {
+      // Brand new user: Always Free tier by default, never Studio/Pro unless owner
       const newUser: User = {
         uid: fbUser.uid,
         name: fbUser.displayName || 'Prompt Vault Creator',
         email: fbUser.email || '',
-        photoURL: fbUser.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop&q=80',
+        photoURL: fbUser.photoURL || undefined,
         role: isOwner ? 'superadmin' : 'user',
+        isSuperAdmin: isOwner,
+        isAnonymous: false,
         plan: isOwner ? 'STUDIO' : 'FREE',
-        subscriptionStatus: 'active',
+        subscriptionStatus: isOwner ? 'active' : 'none',
         createdAt: new Date().toISOString().split('T')[0],
         updatedAt: new Date().toISOString().split('T')[0]
       };
@@ -165,6 +261,94 @@ export async function signInWithGoogle(): Promise<User> {
 }
 
 /**
+ * Sign Up with Email and Password
+ */
+export async function signUpWithEmail(email: string, pass: string, name: string): Promise<User> {
+  try {
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    const fbUser = cred.user;
+    
+    if (name) {
+      await updateProfile(fbUser, { displayName: name }).catch(() => {});
+    }
+
+    const isOwner = fbUser.email?.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase();
+    const newUser: User = {
+      uid: fbUser.uid,
+      name: name || fbUser.email?.split('@')[0] || 'Creator',
+      email: fbUser.email || email,
+      role: isOwner ? 'superadmin' : 'user',
+      isSuperAdmin: isOwner,
+      isAnonymous: false,
+      plan: isOwner ? 'STUDIO' : 'FREE',
+      subscriptionStatus: isOwner ? 'active' : 'none',
+      createdAt: new Date().toISOString().split('T')[0],
+      updatedAt: new Date().toISOString().split('T')[0]
+    };
+
+    const userDocRef = doc(db, 'users', fbUser.uid);
+    try {
+      await setDoc(userDocRef, newUser);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `users/${fbUser.uid}`);
+    }
+
+    return newUser;
+  } catch (err) {
+    console.error('Email sign up error:', err);
+    throw err;
+  }
+}
+
+/**
+ * Sign In with Email and Password
+ */
+export async function loginWithEmail(email: string, pass: string): Promise<User> {
+  try {
+    const cred = await signInWithEmailAndPassword(auth, email, pass);
+    const fbUser = cred.user;
+    const isOwner = fbUser.email?.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase();
+
+    const userDocRef = doc(db, 'users', fbUser.uid);
+    let userData: User | null = null;
+    try {
+      const snap = await getDoc(userDocRef);
+      if (snap.exists()) {
+        userData = snap.data() as User;
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    if (userData) {
+      if (isOwner && userData.role !== 'superadmin') {
+        userData = { ...userData, role: 'superadmin', isSuperAdmin: true, plan: 'STUDIO' };
+        await setDoc(userDocRef, userData, { merge: true }).catch(() => {});
+      }
+      return userData;
+    }
+
+    const defaultUser: User = {
+      uid: fbUser.uid,
+      name: fbUser.displayName || email.split('@')[0] || 'Creator',
+      email: fbUser.email || email,
+      role: isOwner ? 'superadmin' : 'user',
+      isSuperAdmin: isOwner,
+      isAnonymous: false,
+      plan: isOwner ? 'STUDIO' : 'FREE',
+      subscriptionStatus: isOwner ? 'active' : 'none',
+      createdAt: new Date().toISOString().split('T')[0],
+      updatedAt: new Date().toISOString().split('T')[0]
+    };
+    await setDoc(userDocRef, defaultUser, { merge: true }).catch(() => {});
+    return defaultUser;
+  } catch (err) {
+    console.error('Email login error:', err);
+    throw err;
+  }
+}
+
+/**
  * Sign out from Firebase Auth
  */
 export async function logOutFromFirebase(): Promise<void> {
@@ -172,6 +356,54 @@ export async function logOutFromFirebase(): Promise<void> {
     await firebaseSignOut(auth);
   } catch (err) {
     console.error('Firebase Sign Out Error:', err);
+  }
+}
+
+/**
+ * Request a subscription upgrade in Firestore (e.g. STUDIO $20/month)
+ */
+export async function requestSubscriptionFirestore(userId: string, requestedPlan: SubscriptionPlan): Promise<void> {
+  try {
+    const userDocRef = doc(db, 'users', userId);
+    await updateDoc(userDocRef, {
+      subscriptionRequested: requestedPlan,
+      updatedAt: new Date().toISOString().split('T')[0]
+    });
+
+    const subDocRef = doc(db, 'subscriptions', `${userId}_${Date.now()}`);
+    await setDoc(subDocRef, {
+      userId,
+      requestedPlan,
+      status: 'pending',
+      requestedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `subscriptions/${userId}`);
+  }
+}
+
+/**
+ * Admin action: Approve and assign subscription plan in Firestore
+ */
+export async function approveSubscriptionFirestore(userId: string, plan: SubscriptionPlan): Promise<void> {
+  try {
+    const userDocRef = doc(db, 'users', userId);
+    await updateDoc(userDocRef, {
+      plan,
+      subscriptionStatus: 'active',
+      subscriptionRequested: null,
+      updatedAt: new Date().toISOString().split('T')[0]
+    });
+
+    const subDocRef = doc(db, 'subscriptions', `${userId}_active`);
+    await setDoc(subDocRef, {
+      userId,
+      plan,
+      status: 'active',
+      approvedAt: new Date().toISOString()
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `users/${userId}`);
   }
 }
 

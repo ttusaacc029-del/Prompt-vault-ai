@@ -12,15 +12,23 @@ interface PricingPageProps {
 }
 
 export const PricingPage: React.FC<PricingPageProps> = ({ onPlanSelected }) => {
-  const { user, upgradePlan, showToast } = useAuth();
+  const { user, isGuest, upgradePlan, showToast } = useAuth();
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
   const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null);
 
   const userCurrentPlan = user?.plan || 'FREE';
 
   const handleSelectPlan = async (planKey: SubscriptionPlan) => {
+    if (isGuest) {
+      showToast('Please create a free account first to request or upgrade your subscription.');
+      return;
+    }
     if (planKey === userCurrentPlan) {
       showToast(`You are currently on the ${planKey} plan.`);
+      return;
+    }
+    if (user?.subscriptionRequested === planKey) {
+      showToast(`Your request for the ${planKey} plan is already pending Administrator approval.`);
       return;
     }
     await upgradePlan(planKey);
@@ -182,28 +190,35 @@ export const PricingPage: React.FC<PricingPageProps> = ({ onPlanSelected }) => {
 
               {/* Action button */}
               <div className="pt-8">
-                <button
-                  onClick={() => handleSelectPlan(planKey)}
-                  disabled={isCurrent}
-                  className={`w-full py-3 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 ${
-                    isCurrent
-                      ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-default'
-                      : isPro
-                      ? 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-lg shadow-cyan-500/25'
-                      : isStudio
-                      ? 'bg-amber-400 hover:bg-amber-300 text-black shadow-lg shadow-amber-500/20'
-                      : 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 hover:opacity-90'
-                  }`}
-                >
-                  {isCurrent ? (
-                    <span>Your Active Plan</span>
-                  ) : (
-                    <>
-                      <span>{plan.priceMonthly === 0 ? 'Switch to Free' : `Upgrade to ${plan.displayName}`}</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </>
-                  )}
-                </button>
+                {user?.subscriptionRequested === planKey ? (
+                  <div className="w-full py-3 rounded-xl font-bold text-xs sm:text-sm bg-amber-500/15 border border-amber-500/30 text-amber-500 flex items-center justify-center gap-1.5 cursor-default">
+                    <Sparkles className="w-3.5 h-3.5 animate-pulse" />
+                    <span>Request Pending Admin Review</span>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleSelectPlan(planKey)}
+                    disabled={isCurrent}
+                    className={`w-full py-3 rounded-xl font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-1.5 ${
+                      isCurrent
+                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-default'
+                        : isPro
+                        ? 'bg-cyan-500 hover:bg-cyan-400 text-white shadow-lg shadow-cyan-500/25'
+                        : isStudio
+                        ? 'bg-amber-400 hover:bg-amber-300 text-black shadow-lg shadow-amber-500/20'
+                        : 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 hover:opacity-90'
+                    }`}
+                  >
+                    {isCurrent ? (
+                      <span>Your Active Plan</span>
+                    ) : (
+                      <>
+                        <span>{plan.priceMonthly === 0 ? 'Switch to Free' : `Request ${plan.displayName} Plan`}</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
             </div>

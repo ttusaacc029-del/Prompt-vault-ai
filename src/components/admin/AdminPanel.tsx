@@ -968,6 +968,90 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ onRefreshGlobalData }) =
               </div>
             ))}
           </div>
+
+          {/* Pending Subscription Upgrade Requests */}
+          <div className="mt-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900 dark:text-white font-display flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  <span>Pending Subscription Requests ({users.filter(u => !!u.subscriptionRequested).length})</span>
+                </h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  Users who requested the Studio ($20/mo) or Pro ($10/mo) plan awaiting Administrator approval.
+                </p>
+              </div>
+            </div>
+
+            {users.filter(u => !!u.subscriptionRequested).length === 0 ? (
+              <div className="p-6 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0A101E] text-center text-xs text-slate-500">
+                No pending subscription requests at this time. All user tiers are synchronized.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0A101E]">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 text-slate-400 font-bold uppercase text-[10px]">
+                    <tr>
+                      <th className="p-3.5">User</th>
+                      <th className="p-3.5">Current Plan</th>
+                      <th className="p-3.5">Requested Upgrade</th>
+                      <th className="p-3.5 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                    {users.filter(u => !!u.subscriptionRequested).map(u => (
+                      <tr key={u.uid} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
+                        <td className="p-3.5">
+                          <p className="font-bold text-slate-900 dark:text-white">{u.name}</p>
+                          <p className="text-[11px] text-slate-500">{u.email}</p>
+                        </td>
+                        <td className="p-3.5">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-400">
+                            {u.plan}
+                          </span>
+                        </td>
+                        <td className="p-3.5">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                            {u.subscriptionRequested} ($20/mo)
+                          </span>
+                        </td>
+                        <td className="p-3.5 text-right space-x-2">
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api.approveSubscription(u.uid, u.subscriptionRequested as SubscriptionPlan);
+                                showToast(`Approved ${u.subscriptionRequested} plan for ${u.name}!`);
+                                loadAdminData();
+                              } catch (err: any) {
+                                showToast(err.message || 'Failed to approve');
+                              }
+                            }}
+                            className="px-3 py-1 rounded-lg text-[11px] font-bold bg-emerald-500 hover:bg-emerald-400 text-white shadow transition-colors"
+                          >
+                            Approve & Activate
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api.updateUser(u.uid, { subscriptionRequested: undefined as any });
+                                showToast(`Declined upgrade request for ${u.name}`);
+                                loadAdminData();
+                              } catch (err: any) {
+                                showToast(err.message || 'Failed to decline');
+                              }
+                            }}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-400 hover:text-rose-400 transition-colors"
+                          >
+                            Decline
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

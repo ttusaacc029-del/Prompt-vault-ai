@@ -5,69 +5,56 @@ import confetti from 'canvas-confetti';
 import { 
   auth, 
   signInWithGoogle as fbSignInWithGoogle, 
+  signUpWithEmail as fbSignUpWithEmail,
+  loginWithEmail as fbLoginWithEmail,
+  ensureAnonymousGuest,
+  getUserProfile,
   logOutFromFirebase, 
   toggleFavoriteFirestore, 
-  syncUserProfile 
+  syncUserProfile,
+  requestSubscriptionFirestore,
+  approveSubscriptionFirestore,
+  OWNER_SUPERADMIN_EMAIL
 } from './firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-
-const OWNER_SUPERADMIN_EMAIL = 'usagiptiktok@gmail.com';
+import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
+  isGuest: boolean;
   isAdmin: boolean;
   isSuperAdmin: boolean;
   canManage: (permission: keyof AdminPermissions) => boolean;
   usage: MonthlyUsage | null;
   savedPromptIds: string[];
-  login: (email: string) => Promise<void>;
+  login: (email: string, password?: string) => Promise<void>;
+  signUp: (email: string, password: string, name: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
-  logout: () => void;
-  quickSwitchUser: (preset: 'SUPER_ADMIN' | 'ADMIN' | 'STUDIO' | 'PRO' | 'FREE') => Promise<void>;
+  logout: () => Promise<void>;
   upgradePlan: (newPlan: SubscriptionPlan) => Promise<void>;
+  adminApproveUserPlan: (targetUserId: string, plan: SubscriptionPlan) => Promise<void>;
   refreshUsage: () => Promise<void>;
   toggleFavorite: (promptId: string) => Promise<boolean>;
   isPromptSaved: (promptId: string) => boolean;
   toastMessage: string | null;
   showToast: (msg: string) => void;
+  isLoadingAuth: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('pv_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        return null;
-      }
-    }
-    // Default logged-in user for an instant working experience: Studio Creator
-    return {
-      uid: 'usr-studio',
-      name: 'Maya Lin',
-      email: 'creator@promptvault.ai',
-      photoURL: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?w=120&auto=format&fit=crop&q=80',
-      role: 'user',
-      plan: 'STUDIO',
-      subscriptionStatus: 'active',
-      createdAt: '2026-01-15',
-      updatedAt: '2026-03-02'
-    };
-  });
-
+  const [user, setUser] = useState<User | null>(null);
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [usage, setUsage] = useState<MonthlyUsage | null>(null);
-  const [savedPromptIds, setSavedPromptIds] = useState<string[]>(['prompt-1', 'prompt-2']);
+  const [savedPromptIds, setSavedPromptIds] = useState<string[]>([]);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
-    }, 3200);
+    }, 3500);
   };
 
   const refreshUsage = async () => {
@@ -76,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const u = await api.getUsage(user.uid);
       setUsage(u);
     } catch (e) {
-      console.error('Failed to fetch usage', e);
+      // safe fallback
     }
   };
 
@@ -86,30 +73,132 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const favs = await api.getFavorites(user.uid, user.plan);
       setSavedPromptIds(favs.map(f => f.id));
     } catch (e) {
-      console.error('Failed to fetch favorites', e);
+      // safe fallback
     }
   };
 
+  // Listen to Firebase Auth state
   useEffect(() => {
-    if (user) {
-      localStorage.setItem('pv_user', JSON.stringify(user));
+    let unsubscribe: () => void;
+
+    const initAuth = async () => {
+      unsubscribe = onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
+        if (!fbUser) {
+          // No user signed in: Automatically create an Anonymous Guest Account with Free tier
+          try {
+            const guest = await ensureAnonymousGuest();
+            setUser(guest);
+          } catch (err) {
+            console.error('Error creating anonymous guest account:', err);
+          } finally {
+            setIsLoadingAuth(false);
+          }
+          return;
+        }
+
+        // Authenticated Firebase User (either anonymous or registered)
+        try {
+          const profile = await getUserProfile(fbUser.uid);
+          const isOwner = !fbUser.isAnonymous && fbUser.email?.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase();
+
+          if (profile) {
+            // Guard: If it's the owner, ensure superadmin + studio plan
+            if (isOwner && profile.role !== 'superadmin') {
+              profile.role = 'superadmin';
+              profile.isSuperAdmin = true;
+              profile.plan = 'STUDIO';
+            }
+            // For any normal user/guest, verify plan is never spontaneously elevated
+            if (!isOwner && profile.role === 'superadmin') {
+              profile.role = 'user';
+              profile.isSuperAdmin = false;
+            }
+            setUser(profile);
+          } else {
+            // Document doesn't exist yet in Firestore
+            const newUserProfile: User = {
+              uid: fbUser.uid,
+              name: fbUser.displayName || (fbUser.isAnonymous ? 'Guest Creator' : (fbUser.email?.split('@')[0] || 'Creator')),
+              email: fbUser.email || '',
+              photoURL: fbUser.photoURL || undefined,
+              isAnonymous: fbUser.isAnonymous,
+              role: isOwner ? 'superadmin' : 'user',
+              isSuperAdmin: isOwner,
+              plan: isOwner ? 'STUDIO' : 'FREE',
+              subscriptionStatus: isOwner ? 'active' : 'none',
+              createdAt: new Date().toISOString().split('T')[0],
+              updatedAt: new Date().toISOString().split('T')[0]
+            };
+            await syncUserProfile(newUserProfile).catch(() => {});
+            setUser(newUserProfile);
+          }
+        } catch (err) {
+          console.error('Failed to resolve Firebase user document:', err);
+        } finally {
+          setIsLoadingAuth(false);
+        }
+      });
+    };
+
+    initAuth();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  // Sync usage and saved prompts whenever user UID or plan updates
+  useEffect(() => {
+    if (user?.uid) {
+      // Save local cache strictly scoped to THIS user's UID to prevent cross-account leakage
+      try {
+        localStorage.setItem(`pv_user_cache_${user.uid}`, JSON.stringify(user));
+      } catch (e) {
+        // ignore
+      }
       refreshUsage();
       refreshSaved();
     } else {
-      localStorage.removeItem('pv_user');
       setUsage(null);
       setSavedPromptIds([]);
     }
   }, [user?.uid, user?.plan]);
 
-  const login = async (email: string) => {
-    const res = await api.login(email);
-    setUser(res.user);
-    // Sync profile to Firestore asynchronously
-    syncUserProfile(res.user).catch(() => {});
-    showToast(`Welcome, ${res.user.name}!`);
+  // Sign in with Email / Password
+  const login = async (email: string, password?: string) => {
+    try {
+      let loggedUser: User;
+      if (password) {
+        loggedUser = await fbLoginWithEmail(email, password);
+      } else {
+        // Fallback for simple email flow
+        const res = await api.login(email);
+        loggedUser = res.user;
+        await syncUserProfile(loggedUser).catch(() => {});
+      }
+      setUser(loggedUser);
+      showToast(`Welcome back, ${loggedUser.name}!`);
+    } catch (err: any) {
+      console.error('Login error:', err);
+      showToast(err.message || 'Login failed. Please check credentials.');
+      throw err;
+    }
   };
 
+  // Sign Up / Create Account (Upgrades Guest to Permanent Account)
+  const signUp = async (email: string, password: string, name: string) => {
+    try {
+      const newUser = await fbSignUpWithEmail(email, password, name);
+      setUser(newUser);
+      showToast(`Account created! Welcome to Prompt Vault, ${newUser.name}.`);
+    } catch (err: any) {
+      console.error('Sign up error:', err);
+      showToast(err.message || 'Account creation failed.');
+      throw err;
+    }
+  };
+
+  // Continue with Google (Links guest or signs in)
   const signInWithGoogle = async () => {
     try {
       const fbUser = await fbSignInWithGoogle();
@@ -117,65 +206,121 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       showToast(`Welcome, ${fbUser.name}!`);
     } catch (err: any) {
       console.error('Google login failed:', err);
-      // If popup was cancelled or failed, show friendly error
       if (err?.code !== 'auth/popup-closed-by-user') {
         showToast(err?.message || 'Google Sign-In failed');
       }
+      throw err;
     }
   };
 
-  const logout = () => {
-    logOutFromFirebase().catch(() => {});
-    setUser(null);
-    showToast('Logged out of Prompt Vault');
+  // Logout: Completely clear session and immediately restore a clean Anonymous Guest session
+  const logout = async () => {
+    try {
+      await logOutFromFirebase();
+      // Remove any user-specific cached items from storage
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && (key.startsWith('pv_') || key.includes('user'))) {
+            localStorage.removeItem(key);
+          }
+        }
+        sessionStorage.clear();
+      } catch (e) {
+        // ignore
+      }
+      // Re-initialize guest account
+      const guest = await ensureAnonymousGuest();
+      setUser(guest);
+      showToast('Signed out. You are now browsing as Guest.');
+    } catch (err) {
+      console.error('Error during logout:', err);
+    }
   };
 
-  const quickSwitchUser = async (preset: 'SUPER_ADMIN' | 'ADMIN' | 'STUDIO' | 'PRO' | 'FREE') => {
-    const emails = {
-      SUPER_ADMIN: OWNER_SUPERADMIN_EMAIL,
-      ADMIN: 'admin@promptvault.ai',
-      STUDIO: 'creator@promptvault.ai',
-      PRO: 'pro@promptvault.ai',
-      FREE: 'alex@example.com'
-    };
-    await login(emails[preset]);
-  };
+  // Admin access validation: strictly derived from backend / Firebase authentication
+  const isSuperAdmin = !user?.isAnonymous && (
+    user?.email?.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase() || 
+    user?.role === 'superadmin' || 
+    !!user?.isSuperAdmin
+  );
+  
+  const isAdmin = !user?.isAnonymous && (
+    isSuperAdmin || 
+    user?.role === 'admin'
+  );
 
-  const isSuperAdmin = user?.email.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase() || user?.role === 'superadmin' || !!user?.isSuperAdmin;
-  const isAdmin = isSuperAdmin || user?.role === 'admin';
+  const isGuest = !user || !!user.isAnonymous;
 
   const canManage = (permission: keyof AdminPermissions): boolean => {
     if (isSuperAdmin) return true;
     if (!isAdmin) return false;
-    if (!user?.adminPermissions) return true; // Default admin has general permissions
+    if (!user?.adminPermissions) return true;
     return !!user.adminPermissions[permission];
   };
 
+  // Plan Selection / Upgrade:
+  // Studio Plan ($20/mo) and Pro tiers require Admin approval for regular users!
   const upgradePlan = async (newPlan: SubscriptionPlan) => {
     if (!user) {
-      showToast('Please sign in to choose a plan');
+      showToast('Please sign in or create an account to choose a plan');
       return;
     }
-    const updated = await api.updateUser(user.uid, { plan: newPlan });
-    setUser(updated);
-    syncUserProfile(updated).catch(() => {});
-    showToast(`Switched plan to ${newPlan}!`);
 
-    // Celebratory confetti animation on upgrade
+    if (user.isAnonymous) {
+      showToast('Please create a free account first to subscribe to a plan');
+      return;
+    }
+
+    // If Admin/SuperAdmin, can switch directly
+    if (isAdmin) {
+      const updated = await api.updateUser(user.uid, { plan: newPlan });
+      setUser(updated);
+      syncUserProfile(updated).catch(() => {});
+      showToast(`Admin: Switched plan to ${newPlan}`);
+      return;
+    }
+
+    // Regular users: request plan approval from Admin
     try {
-      confetti({
-        particleCount: 80,
-        spread: 70,
-        origin: { y: 0.6 }
-      });
-    } catch (err) {
-      // safe fallback
+      await api.requestSubscription(user.uid, newPlan);
+      await requestSubscriptionFirestore(user.uid, newPlan).catch(() => {});
+      
+      setUser(prev => prev ? { ...prev, subscriptionRequested: newPlan } : null);
+      showToast(`Subscription requested for ${newPlan} plan! The Admin will review and activate your membership.`);
+      
+      try {
+        confetti({
+          particleCount: 40,
+          spread: 50,
+          origin: { y: 0.6 }
+        });
+      } catch (e) {
+        // ignore
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Failed to submit subscription request');
+    }
+  };
+
+  // Admin approves a user's subscription
+  const adminApproveUserPlan = async (targetUserId: string, plan: SubscriptionPlan) => {
+    if (!isAdmin) {
+      showToast('Unauthorized: Only administrators can approve subscriptions.');
+      return;
+    }
+    try {
+      await api.approveSubscription(targetUserId, plan);
+      await approveSubscriptionFirestore(targetUserId, plan).catch(() => {});
+      showToast(`Approved ${plan} plan for user ${targetUserId}`);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to approve subscription');
     }
   };
 
   const toggleFavorite = async (promptId: string): Promise<boolean> => {
     if (!user) {
-      showToast('Please sign in to save prompts to your vault');
+      showToast('Please create an account to save prompts');
       return false;
     }
     const res = await api.toggleFavorite(user.uid, promptId);
@@ -197,22 +342,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     <AuthContext.Provider
       value={{
         user,
-        isAuthenticated: !!user,
+        isAuthenticated: !!user && !user.isAnonymous,
+        isGuest,
         isAdmin,
         isSuperAdmin,
         canManage,
         usage,
         savedPromptIds,
         login,
+        signUp,
         signInWithGoogle,
         logout,
-        quickSwitchUser,
         upgradePlan,
+        adminApproveUserPlan,
         refreshUsage,
         toggleFavorite,
         isPromptSaved,
         toastMessage,
-        showToast
+        showToast,
+        isLoadingAuth
       }}
     >
       {children}

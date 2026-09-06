@@ -28,9 +28,11 @@ export interface User {
   photoURL?: string;
   role: UserRole;
   isSuperAdmin?: boolean;
+  isAnonymous?: boolean;
   adminPermissions?: AdminPermissions;
   plan: SubscriptionPlan;
-  subscriptionStatus: 'active' | 'trialing' | 'canceled' | 'past_due';
+  subscriptionRequested?: SubscriptionPlan;
+  subscriptionStatus: 'active' | 'trialing' | 'canceled' | 'past_due' | 'none';
   createdAt: string;
   updatedAt: string;
 }

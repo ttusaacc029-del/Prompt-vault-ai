@@ -38,8 +38,14 @@ service cloud.firestore {
     // Users Collection
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.auth.uid == userId;
-      // Super admin can change any field; admin can edit non-superadmins; owner can update own basic profile
+      // Normal users/guests can ONLY create their profile with role == 'user' and plan == 'FREE'
+      allow create: if isAuthenticated() && request.auth.uid == userId && (
+        isSuperAdmin() || (
+          request.resource.data.role == 'user' &&
+          request.resource.data.plan == 'FREE'
+        )
+      );
+      // Super admin can change any field; admin can edit non-superadmins; owner can update own profile but CANNOT modify role or plan
       allow update: if isSuperAdmin() || (
         isAdmin() && request.resource.data.role != 'superadmin'
       ) || (
@@ -48,6 +54,13 @@ service cloud.firestore {
         request.resource.data.role == resource.data.role
       );
       allow delete: if isSuperAdmin();
+    }
+
+    // Subscriptions Collection (Managed strictly by Admin)
+    match /subscriptions/{subId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
     }
 
     // Admins List (Only Super Admin can add/modify/remove admins)
