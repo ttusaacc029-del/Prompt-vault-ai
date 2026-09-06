@@ -1,0 +1,7 @@
+{
+  "name": "Prompt Vault",
+  "description": "Discover, enhance, create, and share professional AI video master prompts with AI prompt enhancement, image-to-prompt generation, creator showcase, and subscription tier access.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

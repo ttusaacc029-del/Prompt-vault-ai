@@ -1,0 +1,111 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny global catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.email == 'usagiptiktok@gmail.com' ||
+        (request.auth.token.keys().hasAll(['role']) && request.auth.token.role == 'superadmin') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.email == 'usagiptiktok@gmail.com' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'superadmin'))
+      );
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        isSuperAdmin() ||
+        (request.auth.token.keys().hasAll(['role']) && request.auth.token.role == 'admin') || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'superadmin']) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      // Super admin can change any field; admin can edit non-superadmins; owner can update own basic profile
+      allow update: if isSuperAdmin() || (
+        isAdmin() && request.resource.data.role != 'superadmin'
+      ) || (
+        isOwner(userId) &&
+        request.resource.data.plan == resource.data.plan &&
+        request.resource.data.role == resource.data.role
+      );
+      allow delete: if isSuperAdmin();
+    }
+
+    // Admins List (Only Super Admin can add/modify/remove admins)
+    match /admins/{adminId} {
+      allow read: if isAdmin();
+      allow write: if isSuperAdmin();
+    }
+
+    // Categories: Public read, Admin write
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Master Prompts: Published prompts can be read by anyone, drafts by admin. Writes strictly Admin!
+    match /prompts/{promptId} {
+      allow read: if resource.data.isPublished == true || isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Favorites: Users can save and remove prompts for their own account
+    match /favorites/{favoriteId} {
+      allow read: if isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+
+    // Creator Videos
+    match /videos/{videoId} {
+      allow read: if resource.data.status == 'APPROVED' || isAdmin() || (isAuthenticated() && resource.data.creatorId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.creatorId == request.auth.uid;
+      allow update: if isAdmin() || (isAuthenticated() && resource.data.creatorId == request.auth.uid && request.resource.data.status == resource.data.status);
+      allow delete: if isAdmin() || (isAuthenticated() && resource.data.creatorId == request.auth.uid);
+    }
+
+    // Video Reports
+    match /reports/{reportId} {
+      allow create: if isAuthenticated() && request.resource.data.reporterId == request.auth.uid;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Custom Prompt Requests
+    match /customPromptRequests/{requestId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // Usage Tracking
+    match /usage/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow read, update: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create, delete: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,203 @@
+{
+  "entities": {
+    "users": {
+      "title": "User",
+      "description": "User profile, role, and subscription status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "admin", "superadmin"] },
+        "plan": { "type": "string", "enum": ["FREE", "PRO", "STUDIO"] },
+        "subscriptionStatus": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "plan"]
+    },
+    "prompts": {
+      "title": "Prompt",
+      "description": "Master AI Video Prompt entry",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "category": { "type": "string" },
+        "tags": { "type": "array" },
+        "thumbnail": { "type": "string" },
+        "previewMedia": { "type": "string" },
+        "fullPrompt": { "type": "string", "maxLength": 5000 },
+        "exampleOutput": { "type": "string" },
+        "recommendedUse": { "type": "string" },
+        "creationDate": { "type": "string" },
+        "updatedDate": { "type": "string" },
+        "featuredStatus": { "type": "boolean" },
+        "accessLevel": { "type": "string", "enum": ["FREE", "PRO", "STUDIO"] },
+        "customizableVariables": { "type": "array" },
+        "copiesCount": { "type": "number" },
+        "savesCount": { "type": "number" },
+        "isPublished": { "type": "boolean" }
+      },
+      "required": ["title", "fullPrompt", "category", "accessLevel"]
+    },
+    "categories": {
+      "title": "Category",
+      "description": "Prompt categorization hierarchy",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "slug": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "order": { "type": "number" },
+        "isEnabled": { "type": "boolean" }
+      },
+      "required": ["name", "slug"]
+    },
+    "favorites": {
+      "title": "Favorite",
+      "description": "User saved prompt reference",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "promptId": { "type": "string" },
+        "savedAt": { "type": "string" }
+      },
+      "required": ["userId", "promptId"]
+    },
+    "videos": {
+      "title": "CreatorVideo",
+      "description": "Community showcase video",
+      "type": "object",
+      "properties": {
+        "creatorId": { "type": "string" },
+        "creatorName": { "type": "string" },
+        "creatorAvatar": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "videoUrl": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "category": { "type": "string" },
+        "tags": { "type": "array" },
+        "promptUsed": { "type": "string", "maxLength": 5000 },
+        "promptId": { "type": "string" },
+        "likesCount": { "type": "number" },
+        "viewsCount": { "type": "number" },
+        "uploadDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["APPROVED", "PENDING", "REJECTED"] },
+        "moderationNote": { "type": "string" }
+      },
+      "required": ["creatorId", "title", "videoUrl"]
+    },
+    "reports": {
+      "title": "VideoReport",
+      "description": "Content moderation report",
+      "type": "object",
+      "properties": {
+        "reporterId": { "type": "string" },
+        "reporterName": { "type": "string" },
+        "videoId": { "type": "string" },
+        "videoTitle": { "type": "string" },
+        "reason": { "type": "string" },
+        "description": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "RESOLVED", "DISMISSED"] }
+      },
+      "required": ["reporterId", "videoId", "reason"]
+    },
+    "customPromptRequests": {
+      "title": "CustomPromptRequest",
+      "description": "User bespoke prompt creation request",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userEmail": { "type": "string", "format": "email" },
+        "userPlan": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "idea": { "type": "string", "maxLength": 2000 },
+        "detailedDescription": { "type": "string", "maxLength": 5000 },
+        "style": { "type": "string" },
+        "targetPlatform": { "type": "string" },
+        "desiredDuration": { "type": "string" },
+        "referenceImageUrl": { "type": "string" },
+        "additionalRequirements": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "IN_PROGRESS", "FULFILLED", "REJECTED"] },
+        "priority": { "type": "boolean" },
+        "adminNotes": { "type": "string" },
+        "finalMasterPrompt": { "type": "string" },
+        "fulfilledPrompt": { "type": "string" },
+        "fulfilledDate": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "title", "idea"]
+    },
+    "usage": {
+      "title": "MonthlyUsage",
+      "description": "Monthly feature usage metrics",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "month": { "type": "string" },
+        "promptEnhancerUsed": { "type": "number" },
+        "imageToPromptUsed": { "type": "number" },
+        "customRequestsUsed": { "type": "number" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["userId", "month"]
+    },
+    "notifications": {
+      "title": "Notification",
+      "description": "User notifications",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "message": { "type": "string", "maxLength": 1000 },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "title", "message"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "users",
+      "description": "User accounts, roles, and plans"
+    },
+    "/prompts/{promptId}": {
+      "schema": "prompts",
+      "description": "Cinematic AI video prompt catalog"
+    },
+    "/categories/{categoryId}": {
+      "schema": "categories",
+      "description": "Categories for filtering prompts"
+    },
+    "/favorites/{favoriteId}": {
+      "schema": "favorites",
+      "description": "User saved prompt favorites"
+    },
+    "/videos/{videoId}": {
+      "schema": "videos",
+      "description": "Community video showcase submissions"
+    },
+    "/reports/{reportId}": {
+      "schema": "reports",
+      "description": "User reported videos for admin review"
+    },
+    "/customPromptRequests/{requestId}": {
+      "schema": "customPromptRequests",
+      "description": "Custom prompt requests from subscribers"
+    },
+    "/usage/{userId}": {
+      "schema": "usage",
+      "description": "User AI quota consumption"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "notifications",
+      "description": "User notifications"
+    }
+  }
+}
