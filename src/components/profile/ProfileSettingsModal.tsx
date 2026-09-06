@@ -139,7 +139,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
                       type="text"
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      className="w-full p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-white focus:outline-none focus:border-cyan-500"
+                      className="w-full p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500"
                     />
                   </div>
 
@@ -205,7 +205,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
                     <select
                       value={defaultEngine}
                       onChange={(e) => setDefaultEngine(e.target.value)}
-                      className="w-full p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-white focus:outline-none focus:border-cyan-500"
+                      className="w-full p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500"
                     >
                       <option value="Runway Gen-3 Alpha">Runway Gen-3 Alpha</option>
                       <option value="Kling 1.5 Pro">Kling 1.5 Pro</option>
@@ -223,7 +223,7 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
                     <select
                       value={aspectRatioPref}
                       onChange={(e) => setAspectRatioPref(e.target.value)}
-                      className="w-full p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-white focus:outline-none focus:border-cyan-500"
+                      className="w-full p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500"
                     >
                       <option value="16:9 Widescreen">16:9 Widescreen (YouTube, Cinema)</option>
                       <option value="9:16 Vertical">9:16 Vertical (TikTok, Reels, Shorts)</option>

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -9,11 +9,30 @@
     <meta property="og:description" content="Discover, enhance, create, and share professional AI video master prompts with AI prompt enhancement, image-to-prompt generation, creator showcase, and subscription tier access." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="google-site-verification" content="hp_FSAOLbngx7a0uc0eXdyWqZm9E2_1Sym8IgaPCyAY" />
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('pv_theme');
+          var isDark = saved === 'dark' || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches) || !saved;
+          if (saved === 'light') isDark = false;
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.classList.remove('light');
+            document.documentElement.style.colorScheme = 'dark';
+          } else {
+            document.documentElement.classList.add('light');
+            document.documentElement.classList.remove('dark');
+            document.documentElement.style.colorScheme = 'light';
+          }
+        } catch (e) {}
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   </head>
-  <body class="bg-[#090D16] text-slate-100 antialiased min-h-screen selection:bg-cyan-500/30 selection:text-cyan-200">
+  <body class="bg-slate-50 dark:bg-[#070A12] text-slate-900 dark:text-slate-100 antialiased min-h-screen selection:bg-cyan-500/30 selection:text-cyan-200 transition-colors">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
