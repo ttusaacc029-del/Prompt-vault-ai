@@ -71,8 +71,13 @@ export const PromptEnhancer: React.FC<PromptEnhancerProps> = ({
         visualQuality
       });
 
-      setEnhancedOutput(res.enhancedPrompt);
-      setEditedOutput(res.enhancedPrompt);
+      const outputText = res?.enhancedPrompt || (res as any)?.prompt || (res as any)?.masterPrompt || '';
+      if (!outputText) {
+        throw new Error('No enhanced prompt was returned by the AI model.');
+      }
+
+      setEnhancedOutput(outputText);
+      setEditedOutput(outputText);
       setIsEditingOutput(false);
       await refreshUsage();
       showToast('Master Prompt generated!');

@@ -561,6 +561,7 @@ app.get('/api/usage/:userId', (req, res) => {
 
 // AI Prompt Enhancer
 app.post(['/api/ai/enhance-prompt', '/api/ai/enhance'], async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
   const { 
     userId = 'usr-free', 
     userPlan = 'FREE', 
@@ -573,10 +574,14 @@ app.post(['/api/ai/enhance-prompt', '/api/ai/enhance'], async (req, res) => {
     lighting,
     targetEngine,
     visualQuality 
-  } = req.body;
+  } = req.body || {};
 
   if (!idea || typeof idea !== 'string' || idea.trim().length === 0) {
-    return res.status(400).json({ error: 'Please provide an idea to enhance.' });
+    return res.status(400).json({ 
+      success: false,
+      error: 'Please provide an idea to enhance.',
+      message: 'Please provide an idea to enhance.'
+    });
   }
 
   // 1. Check Usage Limits Server-Side
@@ -585,7 +590,9 @@ app.post(['/api/ai/enhance-prompt', '/api/ai/enhance'], async (req, res) => {
 
   if (!check.allowed) {
     return res.status(403).json({
+      success: false,
       error: "You've reached your monthly limit for AI Prompt Enhancer.",
+      message: "You've reached your monthly limit for AI Prompt Enhancer.",
       usage: currentUsage,
       limit: check.limit
     });
@@ -594,7 +601,9 @@ app.post(['/api/ai/enhance-prompt', '/api/ai/enhance'], async (req, res) => {
   const ai = getAI();
   if (!ai) {
     return res.status(500).json({
-      error: 'Gemini API key is not configured. Please ensure GEMINI_API_KEY is configured in Settings > Secrets.'
+      success: false,
+      error: 'Gemini API key is not configured. Please ensure GEMINI_API_KEY is configured in Settings > Secrets.',
+      message: 'Gemini API key is not configured. Please ensure GEMINI_API_KEY is configured in Settings > Secrets.'
     });
   }
 
@@ -674,8 +683,9 @@ Return valid JSON strictly matching the response schema.`;
     const textOutput = response.text;
     if (textOutput) {
       try {
-        const parsed = JSON.parse(textOutput);
-        enhancedPrompt = (parsed.enhancedPrompt || '').trim();
+        const cleanJson = textOutput.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        const parsed = JSON.parse(cleanJson);
+        enhancedPrompt = (parsed.enhancedPrompt || parsed.prompt || parsed.masterPrompt || '').trim();
         cameraDirection = (parsed.cameraDirection || '').trim();
         lightingSpecs = (parsed.lightingSpecs || '').trim();
         colorGrade = (parsed.colorGrade || '').trim();
@@ -693,14 +703,15 @@ Return valid JSON strictly matching the response schema.`;
     // Deduct usage credit ONLY on success
     const updatedUsage = incrementUserUsage(userId, 'promptEnhancerUsed');
 
+    res.setHeader('Content-Type', 'application/json');
     res.json({
       success: true,
       enhancedPrompt,
-      cameraDirection,
-      lightingSpecs,
-      colorGrade,
-      pacingAndMotion,
-      negativePrompt,
+      cameraDirection: cameraDirection || effectiveCameraStyle,
+      lightingSpecs: lightingSpecs || (lighting || 'Cinematic volumetric lighting'),
+      colorGrade: colorGrade || 'Natural film color palette',
+      pacingAndMotion: pacingAndMotion || 'Fluid continuous cadence',
+      negativePrompt: negativePrompt || 'artifacts, blur, jitter, low quality, distortion',
       suggestedVariables: [
         { key: 'subject', label: 'Subject', defaultValue: idea.trim() },
         { key: 'lighting', label: 'Lighting', defaultValue: lightingSpecs || 'Cinematic volumetric lighting' },
@@ -713,7 +724,9 @@ Return valid JSON strictly matching the response schema.`;
   } catch (error: any) {
     console.error('AI Prompt Enhancement Error:', error);
     const errorMessage = error?.message || 'Failed to enhance prompt with Gemini API.';
+    res.setHeader('Content-Type', 'application/json');
     res.status(500).json({ 
+      success: false,
       error: errorMessage,
       message: errorMessage 
     });
@@ -1286,6 +1299,30 @@ app.put('/api/admin/custom-requests/:id', (req, res) => {
   reqItem.updatedAt = new Date().toISOString().split('T')[0];
 
   res.json(reqItem);
+});
+
+// Catch-all for unmatched /api routes to guarantee valid JSON responses
+app.all('/api/*', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.status(404).json({
+    success: false,
+    error: `API endpoint not found: ${req.method} ${req.path}`,
+    message: `API endpoint not found: ${req.method} ${req.path}`
+  });
+});
+
+// Express error handling middleware for API routes
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (req.path.startsWith('/api')) {
+    console.error('Unhandled API error:', err);
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(err.status || 500).json({
+      success: false,
+      error: err.message || 'Internal server error',
+      message: err.message || 'Internal server error'
+    });
+  }
+  next(err);
 });
 
 // ==========================================

@@ -16,6 +16,72 @@ function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+/**
+ * Safely executes a fetch request and parses JSON response,
+ * preventing 'Unexpected token' syntax crashes on non-JSON error bodies.
+ */
+async function safeFetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> || {})
+  };
+
+  const res = await fetch(url, {
+    ...options,
+    headers
+  });
+
+  const contentType = res.headers.get('content-type') || '';
+  let data: any = null;
+  let textBody = '';
+
+  if (contentType.includes('application/json')) {
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+  } else {
+    try {
+      textBody = await res.text();
+    } catch {
+      textBody = '';
+    }
+  }
+
+  if (!res.ok) {
+    let errorMsg = data?.error || data?.message;
+    if (!errorMsg && textBody) {
+      try {
+        const parsed = JSON.parse(textBody);
+        errorMsg = parsed.error || parsed.message;
+      } catch {
+        errorMsg = textBody.length > 200 ? textBody.slice(0, 200) + '...' : textBody;
+      }
+    }
+    throw new Error(errorMsg || `Server error (${res.status}): Please try again.`);
+  }
+
+  if (!data) {
+    if (textBody) {
+      try {
+        data = JSON.parse(textBody);
+      } catch {
+        throw new Error('Server returned an invalid response format.');
+      }
+    } else {
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error('Failed to parse response as JSON.');
+      }
+    }
+  }
+
+  return data as T;
+}
+
 export const api = {
   // Auth
   async login(email: string): Promise<{ user: User }> {
@@ -121,16 +187,14 @@ export const api = {
     cameraStyle?: string;
     visualQuality?: string;
   }): Promise<{ success: boolean; enhancedPrompt: string; usage: MonthlyUsage; remaining: number | 'unlimited' }> {
-    const res = await fetch('/api/ai/enhance-prompt', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params)
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed to enhance prompt');
-    }
-    return data;
+    return safeFetchJson<{ success: boolean; enhancedPrompt: string; usage: MonthlyUsage; remaining: number | 'unlimited' }>(
+      '/api/ai/enhance-prompt',
+      {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(params)
+      }
+    );
   },
 
   // Image -> Prompt
@@ -152,16 +216,11 @@ export const api = {
     usage: MonthlyUsage;
     remaining: number | 'unlimited';
   }> {
-    const res = await fetch('/api/ai/image-to-prompt', {
+    return safeFetchJson('/api/ai/image-to-prompt', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getAuthHeaders(),
       body: JSON.stringify(params)
     });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed to analyze image');
-    }
-    return data;
   },
 
   // Creator Showcase
