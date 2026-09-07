@@ -1,7 +1,8 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import dotenv from 'dotenv';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import { createServer as createViteServer } from 'vite';
 import { INITIAL_CATEGORIES, INITIAL_PROMPTS, INITIAL_VIDEOS, DEMO_USERS } from './src/lib/defaultData';
 import { SUBSCRIPTION_PLANS, canUserAccessPrompt, getRequiredPlanForLevel, hasRemainingUsage } from './src/lib/plans';
@@ -16,11 +17,58 @@ const PORT = 3000;
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
-// Lazy GoogleGenAI client
+// Helper to resolve Gemini API key from environment, .env, or AI Studio runtime injection
+function getGeminiApiKey(): string | undefined {
+  if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
+    return process.env.GEMINI_API_KEY.trim();
+  }
+  if (process.env.API_KEY && process.env.API_KEY.trim()) {
+    return process.env.API_KEY.trim();
+  }
+
+  // Check /app/.dev.env.json if injected at runtime by AI Studio
+  try {
+    const devEnvPaths = [
+      path.resolve(process.cwd(), '../.dev.env.json'),
+      '/app/.dev.env.json'
+    ];
+    for (const p of devEnvPaths) {
+      if (fs.existsSync(p)) {
+        const raw = fs.readFileSync(p, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (parsed.GEMINI_API_KEY && typeof parsed.GEMINI_API_KEY === 'string' && parsed.GEMINI_API_KEY.trim()) {
+          process.env.GEMINI_API_KEY = parsed.GEMINI_API_KEY.trim();
+          return process.env.GEMINI_API_KEY;
+        }
+      }
+    }
+  } catch {
+    // Ignore error
+  }
+
+  return undefined;
+}
+
+// Lazy GoogleGenAI client with telemetry headers as per Gemini SDK specification
 let aiClient: GoogleGenAI | null = null;
+let initializedKey: string | undefined = undefined;
+
 function getAI(): GoogleGenAI | null {
-  if (!aiClient && process.env.GEMINI_API_KEY) {
-    aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    return null;
+  }
+
+  if (!aiClient || initializedKey !== apiKey) {
+    initializedKey = apiKey;
+    aiClient = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
   }
   return aiClient;
 }
@@ -512,8 +560,20 @@ app.get('/api/usage/:userId', (req, res) => {
 // ==========================================
 
 // AI Prompt Enhancer
-app.post('/api/ai/enhance-prompt', async (req, res) => {
-  const { userId, userPlan = 'FREE', idea, style, duration, aspectRatio, cameraStyle, visualQuality } = req.body;
+app.post(['/api/ai/enhance-prompt', '/api/ai/enhance'], async (req, res) => {
+  const { 
+    userId = 'usr-free', 
+    userPlan = 'FREE', 
+    idea, 
+    style, 
+    duration, 
+    aspectRatio, 
+    cameraStyle, 
+    cameraMovement,
+    lighting,
+    targetEngine,
+    visualQuality 
+  } = req.body;
 
   if (!idea || typeof idea !== 'string' || idea.trim().length === 0) {
     return res.status(400).json({ error: 'Please provide an idea to enhance.' });
@@ -531,45 +591,103 @@ app.post('/api/ai/enhance-prompt', async (req, res) => {
     });
   }
 
-  try {
-    const ai = getAI();
-    let enhancedPrompt = '';
+  const ai = getAI();
+  if (!ai) {
+    return res.status(500).json({
+      error: 'Gemini API key is not configured. Please ensure GEMINI_API_KEY is configured in Settings > Secrets.'
+    });
+  }
 
-    if (ai) {
-      const promptInstruction = `You are the Lead Master AI Video Prompt Engineer for Prompt Vault.
+  const effectiveCameraStyle = cameraStyle || cameraMovement || 'Dynamic smooth tracking';
+
+  try {
+    const promptInstruction = `You are the Lead Master AI Video Prompt Engineer for Prompt Vault.
 Your mission is to transform the user's core idea into an elite, production-grade Master AI Video Prompt (designed for Runway Gen-3 Alpha, Kling 1.5, Luma Dream Machine, Sora, and Minimax).
 
 CRITICAL RULE: You MUST preserve the user's original concept and core subject. Never substitute or change the fundamental idea.
 
-User's Original Idea: "${idea}"
+User's Original Idea: "${idea.trim()}"
 Desired Visual Style: ${style || 'Cinematic Photoreal 35mm'}
 Desired Duration: ${duration || '5s'}
 Aspect Ratio: ${aspectRatio || '16:9'}
-Camera Movement Style: ${cameraStyle || 'Dynamic smooth tracking'}
+Camera Movement Style: ${effectiveCameraStyle}
+${lighting ? `Lighting: ${lighting}` : ''}
+${targetEngine ? `Target Video Model: ${targetEngine}` : ''}
 Visual Quality: ${visualQuality || '4K Photorealistic, pristine optics'}
 
 Generate a structured, vivid, Hollywood-grade video generation prompt containing:
-- Exact subject details and textural nuances
-- Environment and deep background atmosphere
-- Camera angle, lens characteristics (e.g. 35mm anamorphic, f/1.8), and specific camera motion
+- Exact subject details and tactile textural nuances
+- Environment and atmospheric depth layers
+- Camera angle, lens characteristics (e.g. 35mm anamorphic, f/1.8), and camera trajectory
 - Lighting conditions (e.g. volumetric rays, rim light, golden hour, neon bounce)
 - Composition, depth of field, and fluid motion dynamics
-- Mood and color grading tones
-- Negative guidance or optical artifacts to avoid (clean, no motion artifacts, no stutter)
+- Mood, color palette, and color grading tones
+- Negative guidance or optical artifacts to avoid (clean, no motion stutter, no distortion)
 
-Respond ONLY with the complete Master AI Video Prompt text, without conversational prefixes or markdown formatting around the output. Make it directly copy-pasteable into an AI video generator.`;
+Return valid JSON strictly matching the response schema.`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
-        contents: promptInstruction,
-      });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: promptInstruction,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            enhancedPrompt: {
+              type: Type.STRING,
+              description: 'The complete Master AI Video Prompt ready to copy-paste into an AI video generator.'
+            },
+            cameraDirection: {
+              type: Type.STRING,
+              description: 'Camera lens, angle, and specific camera movement details.'
+            },
+            lightingSpecs: {
+              type: Type.STRING,
+              description: 'Lighting setup, illumination, and color temperature.'
+            },
+            colorGrade: {
+              type: Type.STRING,
+              description: 'Color palette and tone grading specifications.'
+            },
+            pacingAndMotion: {
+              type: Type.STRING,
+              description: 'Kinetic pacing and subject motion dynamics.'
+            },
+            negativePrompt: {
+              type: Type.STRING,
+              description: 'Negative guidance and visual artifacts to avoid.'
+            }
+          },
+          required: ['enhancedPrompt']
+        }
+      }
+    });
 
-      enhancedPrompt = response.text?.trim() || '';
+    let enhancedPrompt = '';
+    let cameraDirection = '';
+    let lightingSpecs = '';
+    let colorGrade = '';
+    let pacingAndMotion = '';
+    let negativePrompt = '';
+
+    const textOutput = response.text;
+    if (textOutput) {
+      try {
+        const parsed = JSON.parse(textOutput);
+        enhancedPrompt = (parsed.enhancedPrompt || '').trim();
+        cameraDirection = (parsed.cameraDirection || '').trim();
+        lightingSpecs = (parsed.lightingSpecs || '').trim();
+        colorGrade = (parsed.colorGrade || '').trim();
+        pacingAndMotion = (parsed.pacingAndMotion || '').trim();
+        negativePrompt = (parsed.negativePrompt || '').trim();
+      } catch {
+        enhancedPrompt = textOutput.trim();
+      }
     }
 
-    // Fallback if API key not yet configured
     if (!enhancedPrompt) {
-      enhancedPrompt = `Cinematic 35mm anamorphic footage of ${idea}. Shot with Arri Alexa LF, ${cameraStyle || 'smooth tracking motion'}, maintaining crisp optical focus with shallow depth of field. ${style || 'Cinematic Photorealistic'} aesthetics with volumetric atmospheric lighting, Kodachrome color grading, realistic fluid dynamics, 24fps film cadence, 16:9 aspect ratio. Photorealistic textures, no motion artifacts.`;
+      throw new Error('Gemini model did not return any enhanced prompt text.');
     }
 
     // Deduct usage credit ONLY on success
@@ -578,12 +696,27 @@ Respond ONLY with the complete Master AI Video Prompt text, without conversation
     res.json({
       success: true,
       enhancedPrompt,
+      cameraDirection,
+      lightingSpecs,
+      colorGrade,
+      pacingAndMotion,
+      negativePrompt,
+      suggestedVariables: [
+        { key: 'subject', label: 'Subject', defaultValue: idea.trim() },
+        { key: 'lighting', label: 'Lighting', defaultValue: lightingSpecs || 'Cinematic volumetric lighting' },
+        { key: 'camera', label: 'Camera', defaultValue: cameraDirection || effectiveCameraStyle }
+      ],
+      suggestedEngines: ['Runway Gen-3 Alpha', 'Kling 1.5 Pro', 'Luma Dream Machine', 'OpenAI Sora'],
       usage: updatedUsage,
       remaining: check.limit === 'unlimited' ? 'unlimited' : Math.max(0, (check.limit as number) - updatedUsage.promptEnhancerUsed)
     });
   } catch (error: any) {
     console.error('AI Prompt Enhancement Error:', error);
-    res.status(500).json({ error: 'Failed to enhance prompt. Credits were not deducted.' });
+    const errorMessage = error?.message || 'Failed to enhance prompt with Gemini API.';
+    res.status(500).json({ 
+      error: errorMessage,
+      message: errorMessage 
+    });
   }
 });
 
