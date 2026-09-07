@@ -13,6 +13,7 @@ import { UserDashboard } from './components/dashboard/UserDashboard';
 import { AdminRouteGuard } from './components/admin/AdminRouteGuard';
 import { SearchModal } from './components/common/SearchModal';
 import { AuthModal } from './components/common/AuthModal';
+import { LoginPage } from './components/auth/LoginPage';
 import { ProfileSettingsModal } from './components/profile/ProfileSettingsModal';
 import { Prompt, Category, CreatorVideo } from './types';
 import { api } from './lib/api';
@@ -24,6 +25,7 @@ function AppContent() {
   // Navigation State with URL synchronization
   const getInitialTab = () => {
     const path = window.location.pathname.replace(/^\//, '');
+    if (path === 'login' || path === 'signin') return 'login';
     if (path === 'admin') return 'admin';
     if (['prompts', 'ai-tools', 'showcase', 'pricing', 'vault', 'dashboard', 'requests'].includes(path)) {
       return path;
@@ -44,7 +46,8 @@ function AppContent() {
   useEffect(() => {
     const handlePopState = () => {
       const path = window.location.pathname.replace(/^\//, '');
-      if (path === 'admin') setActiveTabState('admin');
+      if (path === 'login' || path === 'signin') setActiveTabState('login');
+      else if (path === 'admin') setActiveTabState('admin');
       else if (['prompts', 'ai-tools', 'showcase', 'pricing', 'vault', 'dashboard', 'requests'].includes(path)) {
         setActiveTabState(path);
       } else {
@@ -186,6 +189,13 @@ function AppContent() {
         {activeTab === 'admin' && (
           <AdminRouteGuard
             onRefreshGlobalData={loadAllData}
+            onNavigateHome={() => setActiveTab('landing')}
+          />
+        )}
+
+        {activeTab === 'login' && (
+          <LoginPage
+            onSuccess={() => setActiveTab('prompts')}
             onNavigateHome={() => setActiveTab('landing')}
           />
         )}

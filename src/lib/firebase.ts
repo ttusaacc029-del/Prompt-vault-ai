@@ -1,6 +1,8 @@
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
+  setPersistence,
+  browserLocalPersistence,
   GoogleAuthProvider, 
   signInWithPopup, 
   signOut as firebaseSignOut, 
@@ -43,6 +45,12 @@ const app = initializeApp(firebaseConfig);
 // CRITICAL: The app will break without specifying firestoreDatabaseId
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
+
+// Explicitly configure browserLocalPersistence to preserve auth state across restarts and page reloads
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.warn('Could not set browserLocalPersistence on Firebase Auth:', err);
+});
+
 export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 
@@ -178,6 +186,7 @@ export async function ensureAnonymousGuest(): Promise<User> {
  */
 export async function signInWithGoogle(): Promise<User> {
   try {
+    await setPersistence(auth, browserLocalPersistence).catch(() => {});
     let fbUser: FirebaseUser;
     const isAnonymous = auth.currentUser?.isAnonymous;
 
@@ -265,6 +274,7 @@ export async function signInWithGoogle(): Promise<User> {
  */
 export async function signUpWithEmail(email: string, pass: string, name: string): Promise<User> {
   try {
+    await setPersistence(auth, browserLocalPersistence).catch(() => {});
     const cred = await createUserWithEmailAndPassword(auth, email, pass);
     const fbUser = cred.user;
     
@@ -305,6 +315,7 @@ export async function signUpWithEmail(email: string, pass: string, name: string)
  */
 export async function loginWithEmail(email: string, pass: string): Promise<User> {
   try {
+    await setPersistence(auth, browserLocalPersistence).catch(() => {});
     const cred = await signInWithEmailAndPassword(auth, email, pass);
     const fbUser = cred.user;
     const isOwner = fbUser.email?.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase();

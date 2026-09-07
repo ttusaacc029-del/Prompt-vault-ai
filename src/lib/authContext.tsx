@@ -7,7 +7,6 @@ import {
   signInWithGoogle as fbSignInWithGoogle, 
   signUpWithEmail as fbSignUpWithEmail,
   loginWithEmail as fbLoginWithEmail,
-  ensureAnonymousGuest,
   getUserProfile,
   logOutFromFirebase, 
   toggleFavoriteFirestore, 
@@ -84,22 +83,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const initAuth = async () => {
       unsubscribe = onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
         if (!fbUser) {
-          // No user signed in: Automatically create an Anonymous Guest Account with Free tier
-          try {
-            const guest = await ensureAnonymousGuest();
-            setUser(guest);
-          } catch (err) {
-            console.error('Error creating anonymous guest account:', err);
-          } finally {
-            setIsLoadingAuth(false);
-          }
+          // No user signed in: clear user state
+          setUser(null);
+          setIsLoadingAuth(false);
           return;
         }
 
-        // Authenticated Firebase User (either anonymous or registered)
+        // Authenticated Firebase User
         try {
           const profile = await getUserProfile(fbUser.uid);
-          const isOwner = !fbUser.isAnonymous && fbUser.email?.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase();
+          const isOwner = fbUser.email?.toLowerCase() === OWNER_SUPERADMIN_EMAIL.toLowerCase();
 
           if (profile) {
             // Guard: If it's the owner, ensure superadmin + studio plan
@@ -108,7 +101,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               profile.isSuperAdmin = true;
               profile.plan = 'STUDIO';
             }
-            // For any normal user/guest, verify plan is never spontaneously elevated
+            // For any normal user, verify plan is never spontaneously elevated
             if (!isOwner && profile.role === 'superadmin') {
               profile.role = 'user';
               profile.isSuperAdmin = false;
@@ -118,10 +111,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // Document doesn't exist yet in Firestore
             const newUserProfile: User = {
               uid: fbUser.uid,
-              name: fbUser.displayName || (fbUser.isAnonymous ? 'Guest Creator' : (fbUser.email?.split('@')[0] || 'Creator')),
+              name: fbUser.displayName || (fbUser.email?.split('@')[0] || 'Creator'),
               email: fbUser.email || '',
               photoURL: fbUser.photoURL || undefined,
-              isAnonymous: fbUser.isAnonymous,
+              isAnonymous: false,
               role: isOwner ? 'superadmin' : 'user',
               isSuperAdmin: isOwner,
               plan: isOwner ? 'STUDIO' : 'FREE',
@@ -213,15 +206,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Logout: Completely clear session and immediately restore a clean Anonymous Guest session
+  // Logout: Call Firebase signOut(auth), clear the auth state, and redirect to the Login page
   const logout = async () => {
     try {
       await logOutFromFirebase();
-      // Remove any user-specific cached items from storage
+      setUser(null);
+      setUsage(null);
+      setSavedPromptIds([]);
+
+      // Clear user-specific cached items from storage
       try {
-        for (let i = 0; i < localStorage.length; i++) {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
           const key = localStorage.key(i);
-          if (key && (key.startsWith('pv_') || key.includes('user'))) {
+          if (key && (key.startsWith('pv_user_cache_') || key === 'pv_cached_user')) {
             localStorage.removeItem(key);
           }
         }
@@ -229,10 +226,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (e) {
         // ignore
       }
-      // Re-initialize guest account
-      const guest = await ensureAnonymousGuest();
-      setUser(guest);
-      showToast('Signed out. You are now browsing as Guest.');
+
+      showToast('Signed out successfully.');
+
+      // Redirect to the Login page
+      if (typeof window !== 'undefined') {
+        if (window.location.pathname !== '/login') {
+          window.history.pushState({ tab: 'login' }, '', '/login');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        }
+      }
     } catch (err) {
       console.error('Error during logout:', err);
     }

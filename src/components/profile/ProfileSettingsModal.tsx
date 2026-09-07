@@ -95,9 +95,10 @@ export const ProfileSettingsModal: React.FC<ProfileSettingsModalProps> = ({
 
             <div className="pt-4 border-t border-slate-200 dark:border-slate-800/60 mt-4">
               <button
-                onClick={() => {
-                  logout();
+                id="modal-sign-out-btn"
+                onClick={async () => {
                   onClose();
+                  await logout();
                 }}
                 className="w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left text-rose-400 hover:bg-rose-500/10 transition-colors"
               >
