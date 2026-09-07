@@ -47,60 +47,46 @@ class AIService {
   private baseUrl = '/api/ai';
 
   private async safePost<T>(endpoint: string, payload: any): Promise<T> {
-    const res = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: { 
-        'Accept': 'application/json',
-        'Content-Type': 'application/json' 
-      },
-      body: JSON.stringify(payload)
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: { 
+          'Accept': 'application/json',
+          'Content-Type': 'application/json' 
+        },
+        body: JSON.stringify(payload)
+      });
+    } catch (netErr: any) {
+      throw new Error(`Network error: ${netErr.message || 'Failed to reach AI service.'}`);
+    }
 
-    const contentType = res.headers.get('content-type') || '';
+    const rawText = await res.text();
     let data: any = null;
-    let textBody = '';
-
-    if (contentType.includes('application/json')) {
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
-    } else {
-      try {
-        textBody = await res.text();
-      } catch {
-        textBody = '';
-      }
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      data = null;
     }
 
     if (!res.ok) {
       let errorMsg = data?.error || data?.message;
-      if (!errorMsg && textBody) {
-        try {
-          const parsed = JSON.parse(textBody);
-          errorMsg = parsed.error || parsed.message;
-        } catch {
-          errorMsg = textBody.length > 200 ? textBody.slice(0, 200) + '...' : textBody;
+      if (!errorMsg) {
+        if (res.status === 404) {
+          errorMsg = `AI endpoint ${endpoint} was not found (404).`;
+        } else if (rawText.trim().startsWith('<') || rawText.trim().toLowerCase().includes('the page could not be found')) {
+          errorMsg = `Server error (${res.status}): AI endpoint returned an HTML error page.`;
+        } else if (rawText.trim().length > 0 && rawText.trim().length < 200) {
+          errorMsg = rawText.trim();
+        } else {
+          errorMsg = `Server error (${res.status}): AI operation failed.`;
         }
       }
-      throw new Error(errorMsg || `Server error (${res.status}): AI operation failed.`);
+      throw new Error(errorMsg);
     }
 
-    if (!data) {
-      if (textBody) {
-        try {
-          data = JSON.parse(textBody);
-        } catch {
-          throw new Error('Server returned an invalid response format.');
-        }
-      } else {
-        try {
-          data = await res.json();
-        } catch {
-          throw new Error('Failed to parse AI response as JSON.');
-        }
-      }
+    if (data === null || data === undefined) {
+      throw new Error('AI service returned an invalid response format.');
     }
 
     return data as T;

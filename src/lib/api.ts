@@ -1,82 +1,61 @@
-import { Category, CreatorVideo, CustomPromptRequest, MonthlyUsage, Prompt, SubscriptionPlan, User, VideoReport, AdminStats } from '../types';
-import { auth } from './firebase';
+import { Category, CreatorVideo, CustomPromptRequest, Prompt, SubscriptionPlan, User, VideoReport, MonthlyUsage, AdminStats } from '../types';
 
 function getAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
-  const currentUser = auth.currentUser;
-  if (currentUser) {
-    headers['x-user-id'] = currentUser.uid;
-    if (currentUser.email) {
-      headers['x-user-email'] = currentUser.email;
-    }
-    headers['Authorization'] = `Bearer ${currentUser.uid}`;
-  }
-  return headers;
+  const token = localStorage.getItem('token') || '';
+  return token ? { 'Authorization': `Bearer ${token}` } : {};
 }
 
 /**
  * Safely executes a fetch request and parses JSON response,
- * preventing 'Unexpected token' syntax crashes on non-JSON error bodies.
+ * reading the raw text first to guarantee that HTML/404/500 responses
+ * never crash with 'Unexpected token' syntax errors.
  */
-async function safeFetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
+export async function safeFetchJson<T = any>(url: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Accept': 'application/json',
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {})
   };
 
-  const res = await fetch(url, {
-    ...options,
-    headers
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers
+    });
+  } catch (netErr: any) {
+    throw new Error(`Network error: ${netErr.message || 'Failed to connect to server.'}`);
+  }
 
-  const contentType = res.headers.get('content-type') || '';
+  const rawText = await res.text();
   let data: any = null;
-  let textBody = '';
-
-  if (contentType.includes('application/json')) {
-    try {
-      data = await res.json();
-    } catch {
-      data = null;
-    }
-  } else {
-    try {
-      textBody = await res.text();
-    } catch {
-      textBody = '';
-    }
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    data = null;
   }
 
   if (!res.ok) {
     let errorMsg = data?.error || data?.message;
-    if (!errorMsg && textBody) {
-      try {
-        const parsed = JSON.parse(textBody);
-        errorMsg = parsed.error || parsed.message;
-      } catch {
-        errorMsg = textBody.length > 200 ? textBody.slice(0, 200) + '...' : textBody;
+    if (!errorMsg) {
+      if (res.status === 404) {
+        errorMsg = `API endpoint ${url} was not found (404).`;
+      } else if (rawText.trim().startsWith('<') || rawText.trim().toLowerCase().includes('the page could not be found')) {
+        errorMsg = `Server error (${res.status}): Expected JSON but received an HTML response.`;
+      } else if (rawText.trim().length > 0 && rawText.trim().length < 200) {
+        errorMsg = rawText.trim();
+      } else {
+        errorMsg = `Server error (${res.status}): Please try again.`;
       }
     }
-    throw new Error(errorMsg || `Server error (${res.status}): Please try again.`);
+    throw new Error(errorMsg);
   }
 
-  if (!data) {
-    if (textBody) {
-      try {
-        data = JSON.parse(textBody);
-      } catch {
-        throw new Error('Server returned an invalid response format.');
-      }
-    } else {
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error('Failed to parse response as JSON.');
-      }
+  if (data === null || data === undefined) {
+    if (rawText.trim().length === 0) {
+      return {} as T;
     }
+    throw new Error('Server returned an invalid non-JSON response format.');
   }
 
   return data as T;
@@ -85,31 +64,24 @@ async function safeFetchJson<T>(url: string, options: RequestInit = {}): Promise
 export const api = {
   // Auth
   async login(email: string): Promise<{ user: User }> {
-    const res = await fetch('/api/auth/login', {
+    return safeFetchJson<{ user: User }>('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email })
     });
-    if (!res.ok) throw new Error('Login failed');
-    return res.json();
   },
 
   async updateUser(id: string, updates: Partial<User>): Promise<User> {
-    const res = await fetch(`/api/auth/user/${id}`, {
+    return safeFetchJson<User>(`/api/auth/user/${id}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(updates)
     });
-    if (!res.ok) throw new Error('Failed to update user');
-    return res.json();
   },
 
   async getUsers(): Promise<User[]> {
-    const res = await fetch('/api/auth/users', {
+    return safeFetchJson<User[]>('/api/auth/users', {
       headers: getAuthHeaders()
     });
-    if (!res.ok) throw new Error('Failed to load users');
-    return res.json();
   },
 
   // Prompts
@@ -127,53 +99,41 @@ export const api = {
     if (params.accessLevel) query.set('accessLevel', params.accessLevel);
     if (params.sort) query.set('sort', params.sort);
 
-    const res = await fetch(`/api/prompts?${query.toString()}`);
-    if (!res.ok) throw new Error('Failed to load prompts');
-    return res.json();
+    return safeFetchJson<Prompt[]>(`/api/prompts?${query.toString()}`);
   },
 
   async getPromptById(id: string, userPlan?: SubscriptionPlan): Promise<Prompt> {
     const query = userPlan ? `?userPlan=${userPlan}` : '';
-    const res = await fetch(`/api/prompts/${id}${query}`);
-    if (!res.ok) throw new Error('Failed to load prompt');
-    return res.json();
+    return safeFetchJson<Prompt>(`/api/prompts/${id}${query}`);
   },
 
   async recordCopy(id: string): Promise<{ success: boolean; copiesCount: number }> {
-    const res = await fetch(`/api/prompts/${id}/copy`, { method: 'POST' });
-    return res.json();
+    return safeFetchJson<{ success: boolean; copiesCount: number }>(`/api/prompts/${id}/copy`, {
+      method: 'POST'
+    });
   },
 
   // Categories
   async getCategories(): Promise<Category[]> {
-    const res = await fetch('/api/categories');
-    if (!res.ok) throw new Error('Failed to load categories');
-    return res.json();
+    return safeFetchJson<Category[]>('/api/categories');
   },
 
   // Favorites / My Vault
   async getFavorites(userId: string, userPlan?: SubscriptionPlan): Promise<Prompt[]> {
     const query = userPlan ? `?userPlan=${userPlan}` : '';
-    const res = await fetch(`/api/favorites/${userId}${query}`);
-    if (!res.ok) throw new Error('Failed to load saved prompts');
-    return res.json();
+    return safeFetchJson<Prompt[]>(`/api/favorites/${userId}${query}`);
   },
 
   async toggleFavorite(userId: string, promptId: string): Promise<{ isSaved: boolean; savedIds: string[] }> {
-    const res = await fetch('/api/favorites/toggle', {
+    return safeFetchJson<{ isSaved: boolean; savedIds: string[] }>('/api/favorites/toggle', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId, promptId })
     });
-    if (!res.ok) throw new Error('Failed to toggle saved prompt');
-    return res.json();
   },
 
   // Usage
   async getUsage(userId: string): Promise<MonthlyUsage> {
-    const res = await fetch(`/api/usage/${userId}`);
-    if (!res.ok) throw new Error('Failed to load usage');
-    return res.json();
+    return safeFetchJson<MonthlyUsage>(`/api/usage/${userId}`);
   },
 
   // AI Prompt Enhancer
@@ -226,210 +186,162 @@ export const api = {
   // Creator Showcase
   async getVideos(category?: string): Promise<CreatorVideo[]> {
     const query = category ? `?category=${category}` : '';
-    const res = await fetch(`/api/videos${query}`);
-    if (!res.ok) throw new Error('Failed to load videos');
-    return res.json();
+    return safeFetchJson<CreatorVideo[]>(`/api/videos${query}`);
   },
 
   async uploadVideo(videoData: Partial<CreatorVideo> & { userPlan: SubscriptionPlan }): Promise<{ success: boolean; video: CreatorVideo; message: string }> {
-    const res = await fetch('/api/videos', {
+    return safeFetchJson<{ success: boolean; video: CreatorVideo; message: string }>('/api/videos', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(videoData)
     });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed to upload video');
-    }
-    return data;
   },
 
   async likeVideo(videoId: string, userId: string): Promise<{ likesCount: number; hasLiked: boolean }> {
-    const res = await fetch(`/api/videos/${videoId}/like`, {
+    return safeFetchJson<{ likesCount: number; hasLiked: boolean }>(`/api/videos/${videoId}/like`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userId })
     });
-    return res.json();
   },
 
   async reportVideo(params: { videoId: string; reporterId: string; reporterName?: string; reason: string; description: string }): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`/api/videos/${params.videoId}/report`, {
+    return safeFetchJson<{ success: boolean; message: string }>(`/api/videos/${params.videoId}/report`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params)
     });
-    return res.json();
   },
 
   // Custom Requests
   async getCustomRequests(userId: string): Promise<CustomPromptRequest[]> {
-    const res = await fetch(`/api/custom-requests/${userId}`);
-    if (!res.ok) throw new Error('Failed to load custom requests');
-    return res.json();
+    return safeFetchJson<CustomPromptRequest[]>(`/api/custom-requests/${userId}`);
   },
 
   async submitCustomRequest(params: Partial<CustomPromptRequest>): Promise<{ success: boolean; request: CustomPromptRequest; usage: MonthlyUsage; message: string }> {
-    const res = await fetch('/api/custom-requests', {
+    return safeFetchJson<{ success: boolean; request: CustomPromptRequest; usage: MonthlyUsage; message: string }>('/api/custom-requests', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params)
     });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed to submit custom request');
-    }
-    return data;
   },
 
   // Admin
   async getAdminOverview(): Promise<AdminStats> {
-    const res = await fetch('/api/admin/overview', {
+    return safeFetchJson<AdminStats>('/api/admin/overview', {
       headers: getAuthHeaders()
     });
-    if (!res.ok) throw new Error('Failed to load admin stats: ' + res.statusText);
-    return res.json();
   },
 
   async getAdminPrompts(): Promise<Prompt[]> {
-    const res = await fetch('/api/admin/prompts', {
+    return safeFetchJson<Prompt[]>('/api/admin/prompts', {
       headers: getAuthHeaders()
     });
-    if (!res.ok) throw new Error('Failed to load admin prompts: ' + res.statusText);
-    return res.json();
   },
 
   async createPrompt(promptData: Partial<Prompt>): Promise<Prompt> {
-    const res = await fetch('/api/admin/prompts', {
+    return safeFetchJson<Prompt>('/api/admin/prompts', {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(promptData)
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to create prompt');
-    }
-    return res.json();
   },
 
   async updatePrompt(id: string, promptData: Partial<Prompt>): Promise<Prompt> {
-    const res = await fetch(`/api/admin/prompts/${id}`, {
+    return safeFetchJson<Prompt>(`/api/admin/prompts/${id}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(promptData)
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to update prompt');
-    }
-    return res.json();
   },
 
   async deletePrompt(id: string): Promise<void> {
-    const res = await fetch(`/api/admin/prompts/${id}`, {
+    return safeFetchJson<void>(`/api/admin/prompts/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders()
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to delete prompt');
-    }
   },
 
   async getAdminCategories(): Promise<Category[]> {
-    const res = await fetch('/api/admin/categories', {
+    return safeFetchJson<Category[]>('/api/admin/categories', {
       headers: getAuthHeaders()
     });
-    return res.json();
   },
 
   async createCategory(cat: Partial<Category>): Promise<Category> {
-    const res = await fetch('/api/admin/categories', {
+    return safeFetchJson<Category>('/api/admin/categories', {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(cat)
     });
-    return res.json();
   },
 
   async updateCategory(id: string, cat: Partial<Category>): Promise<Category> {
-    const res = await fetch(`/api/admin/categories/${id}`, {
+    return safeFetchJson<Category>(`/api/admin/categories/${id}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(cat)
     });
-    return res.json();
   },
 
   async deleteCategory(id: string): Promise<void> {
-    await fetch(`/api/admin/categories/${id}`, {
+    return safeFetchJson<void>(`/api/admin/categories/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders()
     });
   },
 
   async reorderCategories(orderedIds: string[]): Promise<Category[]> {
-    const res = await fetch('/api/admin/categories/reorder', {
+    return safeFetchJson<Category[]>('/api/admin/categories/reorder', {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ orderedIds })
     });
-    return res.json();
   },
 
   async getAdminVideos(): Promise<CreatorVideo[]> {
-    const res = await fetch('/api/admin/videos', {
+    return safeFetchJson<CreatorVideo[]>('/api/admin/videos', {
       headers: getAuthHeaders()
     });
-    return res.json();
   },
 
   async setVideoStatus(id: string, status: string, moderationNote?: string): Promise<CreatorVideo> {
-    const res = await fetch(`/api/admin/videos/${id}/status`, {
+    return safeFetchJson<CreatorVideo>(`/api/admin/videos/${id}/status`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify({ status, moderationNote })
     });
-    return res.json();
   },
 
   async deleteAdminVideo(id: string): Promise<void> {
-    await fetch(`/api/admin/videos/${id}`, {
+    return safeFetchJson<void>(`/api/admin/videos/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders()
     });
   },
 
   async getAdminReports(): Promise<VideoReport[]> {
-    const res = await fetch('/api/admin/reports', {
+    return safeFetchJson<VideoReport[]>('/api/admin/reports', {
       headers: getAuthHeaders()
     });
-    return res.json();
   },
 
   async setReportStatus(id: string, status: string): Promise<VideoReport> {
-    const res = await fetch(`/api/admin/reports/${id}/status`, {
+    return safeFetchJson<VideoReport>(`/api/admin/reports/${id}/status`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify({ status })
     });
-    return res.json();
   },
 
   async getAdminCustomRequests(): Promise<CustomPromptRequest[]> {
-    const res = await fetch('/api/admin/custom-requests', {
+    return safeFetchJson<CustomPromptRequest[]>('/api/admin/custom-requests', {
       headers: getAuthHeaders()
     });
-    return res.json();
   },
 
   async fulfillCustomRequest(id: string, update: Partial<CustomPromptRequest>): Promise<CustomPromptRequest> {
-    const res = await fetch(`/api/admin/custom-requests/${id}`, {
+    return safeFetchJson<CustomPromptRequest>(`/api/admin/custom-requests/${id}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(update)
     });
-    return res.json();
   },
 
   async updateCustomRequest(id: string, update: Partial<CustomPromptRequest>): Promise<CustomPromptRequest> {
@@ -438,89 +350,54 @@ export const api = {
 
   // Admin and Super Admin Management
   async getAdmins(): Promise<User[]> {
-    const res = await fetch('/api/admin/admins', {
+    return safeFetchJson<User[]>('/api/admin/admins', {
       headers: getAuthHeaders()
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to load administrators');
-    }
-    return res.json();
   },
 
   async promoteUserToAdmin(email: string, name?: string, permissions?: any): Promise<{ success: boolean; message: string; admin: User }> {
-    const res = await fetch('/api/admin/admins/promote', {
+    return safeFetchJson<{ success: boolean; message: string; admin: User }>('/api/admin/admins/promote', {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ email, name, permissions })
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to promote user to Admin');
-    }
-    return res.json();
   },
 
   async updateAdminPermissions(id: string, permissions: any): Promise<{ success: boolean; admin: User }> {
-    const res = await fetch(`/api/admin/admins/${id}/permissions`, {
+    return safeFetchJson<{ success: boolean; admin: User }>(`/api/admin/admins/${id}/permissions`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify({ permissions })
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to update admin permissions');
-    }
-    return res.json();
   },
 
   async removeAdmin(id: string): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`/api/admin/admins/${id}`, {
+    return safeFetchJson<{ success: boolean; message: string }>(`/api/admin/admins/${id}`, {
       method: 'DELETE',
       headers: getAuthHeaders()
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to remove admin');
-    }
-    return res.json();
   },
 
   // Subscriptions
   async requestSubscription(userId: string, plan: SubscriptionPlan): Promise<{ success: boolean; message: string; user: User }> {
-    const res = await fetch('/api/subscriptions/request', {
+    return safeFetchJson<{ success: boolean; message: string; user: User }>('/api/subscriptions/request', {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ userId, plan })
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to submit subscription request');
-    }
-    return res.json();
   },
 
   async approveSubscription(userId: string, plan: SubscriptionPlan): Promise<{ success: boolean; user: User }> {
-    const res = await fetch('/api/admin/subscriptions/approve', {
+    return safeFetchJson<{ success: boolean; user: User }>('/api/admin/subscriptions/approve', {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ userId, plan })
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to approve subscription');
-    }
-    return res.json();
   },
 
   async getPendingSubscriptions(): Promise<{ userId: string; userEmail: string; userName: string; requestedPlan: SubscriptionPlan; requestedAt: string }[]> {
-    const res = await fetch('/api/admin/subscriptions/pending', {
+    return safeFetchJson<{ userId: string; userEmail: string; userName: string; requestedPlan: SubscriptionPlan; requestedAt: string }[]>('/api/admin/subscriptions/pending', {
       headers: getAuthHeaders()
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Failed to load pending subscriptions');
-    }
-    return res.json();
   }
 };

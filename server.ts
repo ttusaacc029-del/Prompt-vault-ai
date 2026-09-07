@@ -22,6 +22,9 @@ function getGeminiApiKey(): string | undefined {
   if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()) {
     return process.env.GEMINI_API_KEY.trim();
   }
+  if (process.env.GOOGLE_API_KEY && process.env.GOOGLE_API_KEY.trim()) {
+    return process.env.GOOGLE_API_KEY.trim();
+  }
   if (process.env.API_KEY && process.env.API_KEY.trim()) {
     return process.env.API_KEY.trim();
   }
@@ -1349,4 +1352,11 @@ async function startServer() {
   });
 }
 
-startServer();
+// Only start the HTTP listener if not running in a Vercel serverless function environment
+if (process.env.VERCEL !== '1' && !process.env.VERCEL_ENV) {
+  startServer();
+}
+
+export { app };
+export default app;
+
